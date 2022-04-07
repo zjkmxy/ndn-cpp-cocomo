@@ -86,7 +86,7 @@ struct chainable_promise {
   }
 
   void chain(abstract_fiber<YieldType>* inner_fiber) {
-    if(nested){
+    if(nested && !nested->is_done()){
       throw double_await();
     }
     nested = inner_fiber;
@@ -148,8 +148,8 @@ struct base_generator: public abstract_fiber<YieldType> {
     if(nested_yield.has_value()) {
       return nested_yield.value();
     }
-    promise.no_yield_finish = false;
     do {
+      promise.no_yield_finish = false;
       resume();
       if(promise.error){
         std::rethrow_exception(promise.error);
@@ -311,6 +311,7 @@ struct send_awaitable {
   }
 };
 
+// send_generator does not work well for nest generator. Please do not use it.
 template <typename YieldType, typename SendType, typename ReturnType = void>
 struct send_generator;
 

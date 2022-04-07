@@ -13,8 +13,14 @@ generator<int, double> g() {
   co_return -1.0;
 }
 
+generator<int> h3() {
+  printf("execute h3\n");
+  co_return;
+}
+
 generator<int, std::string> h2() {
   printf("execute h2\n");
+  co_await h3();
   co_return "result from h2()";
 }
 
@@ -59,7 +65,6 @@ bool is_prime(int x) {
 }
 
 send_generator<int, int> get_primes(int number) {
-  printf("Hello\n");
   while(true) {
     if(is_prime(number)) {
       number = co_yield number;
@@ -70,9 +75,7 @@ send_generator<int, int> get_primes(int number) {
 
 void print_successive_primes(int iterations, int base = 10) {
   auto prime_generator = get_primes(base);
-  printf("Before start\n");
   prime_generator.next();
-  printf("Init start\n");
   for(int i = 0; i < iterations; i ++) {
     const auto& val = prime_generator.send(std::pow(base, i));
     printf("%d\n", val.value());
