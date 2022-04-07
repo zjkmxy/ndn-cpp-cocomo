@@ -1,0 +1,10 @@
+prefix=@PREFIX@
+libdir=@LIBDIR@
+includedir=@INCLUDEDIR@
+
+Name: libndn-cpp-cocomo
+Description: ndn-cpp-cocomo library
+Version: @VERSION@
+Libs: -L${libdir} -lndn-cpp-cocomo
+Cflags: -I${includedir}
+Requires:
