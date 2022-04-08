@@ -3,43 +3,13 @@
 #include <optional>
 #include <exception>
 #include <memory>
-#if defined(__GNUC__) && (__GNUC__ >= 10)
-#include <coroutine>
-#define CONVERTIBLE_TO(TYPE) std::convertible_to<TYPE>
-#else
-#include <experimental/coroutine>
-#define CONVERTIBLE_TO(TYPE) typename
-#endif
+#include <iostream>
+#include "common.hpp"
+#include "utils.hpp"
 
 namespace asyncio {
 
-#if defined(__GNUC__) && (__GNUC__ >= 10)
-using std::coroutine_handle;
-using std::suspend_always;
-#else
-using std::experimental::coroutine_handle;
-using std::experimental::suspend_always;
-#endif
-
-struct double_await: public std::exception{
- constexpr const char* what() const noexcept override {
-   return "A promise awaits on a second one before the first has finished.";
-  }
-};
-
-struct resume_unfinished: public std::exception{
- constexpr const char* what() const noexcept override {
-   return "await_resume() is called on an unfinished generator/coroutine.";
-  }
-};
-
-struct no_value_returned: public std::exception{
- constexpr const char* what() const noexcept override {
-   return "A generator/coroutine with return type returns no value.";
-  }
-};
-
-/** @brief Common interface of coroutine and generator.
+/** @brief Common interface of yield-based coroutine and generator.
  */
 template<typename YieldType>
 struct abstract_fiber {
@@ -67,17 +37,27 @@ struct chainable_promise {
   bool done;
   bool no_yield_finish;
   SendAwaitable sender;
+  uint64_t promise_id;
 
   constexpr chainable_promise():
     nested(nullptr), error(), yielded_value(std::nullopt), done(false), no_yield_finish(false),
-    sender()
-  {}
+    sender(), promise_id(generate_id())
+  {
+    std::cout << "Generator (" << this->promise_id << ") created" << std::endl;
+  }
 
+  /** @brief Called when a new coroutine is created
+   *         Python generator does not execute before next() is called, so suspend here.
+   */
   constexpr auto initial_suspend() {
     return suspend_always();
   }
 
+  /** @brief Called when a coroutine finishes and before the self-destruction of promise.
+   *         Here we suspends to retain the result.
+   */
   constexpr auto final_suspend() noexcept {
+    std::cout << "Generator (" << promise_id << ") final_suspend" << std::endl;
     return suspend_always();
   }
 
@@ -103,8 +83,12 @@ struct chainable_promise {
     return nested->next();
   }
 
+  /** @brief Called when a value is yielded.
+   *         co_yield XXX = co_await yield_value(XXX)
+   */
   template<CONVERTIBLE_TO(YieldType) From>
   auto& yield_value(From&& value) {
+    std::cout << "Generator (" << this->promise_id << ") yielded " << value << std::endl;
     yielded_value = std::forward<From>(value);
     // To imitate Python's send(), replace SendAwaitable with a user-defined sender
     return sender;
@@ -113,7 +97,10 @@ struct chainable_promise {
 
 template<typename YieldType, typename SendAwaitable = suspend_always>
 struct void_promise: public chainable_promise<YieldType, SendAwaitable> {
+  /** @brief Called on co_return.
+   */
   void return_void() {
+    std::cout << "Generator (" << this->promise_id << ") returned void" << std::endl;
     this->done = true;
   }
 };
@@ -128,6 +115,7 @@ struct ret_value_promise: public chainable_promise<YieldType, SendAwaitable> {
 
   template<CONVERTIBLE_TO(ReturnType) From>
   void return_value(From&& value) {
+    std::cout << "Generator (" << this->promise_id << ") returned " << value << std::endl;
     returned_value = std::forward<From>(value);
     this->done = true;
   }
@@ -144,13 +132,20 @@ struct base_generator: public abstract_fiber<YieldType> {
     // If there is a chained generator, run the inner one first.
     // Note: the inner one may exit immediately.
     auto& promise = this->promise();
+    std::cout << "Generator (" << promise.promise_id << ") next() called" << std::endl;
     auto nested_yield = promise.wait_nested();
     if(nested_yield.has_value()) {
+      std::cout << "Generator (" << promise.promise_id << ") yielded from inner generator with "
+                << nested_yield.value() << std::endl;
       return nested_yield.value();
     }
     do {
+      // This is used to handle the case when inner generator finishes immediately
+      // So we call resume() again to trigger await_resume to set the value
       promise.no_yield_finish = false;
+      std::cout << "Generator (" << promise.promise_id << ") ready to resume in next()" << std::endl;
       resume();
+      std::cout << "Generator (" << promise.promise_id << ") resumed in next()" << std::endl;
       if(promise.error){
         std::rethrow_exception(promise.error);
       } else if(promise.done){
@@ -164,20 +159,30 @@ struct base_generator: public abstract_fiber<YieldType> {
     return promise().done;
   }
 
+  /** @brief Called when the generator is awaited.
+   *         Here we want to use await_suspend to set the outer generator's nested field,
+   *         so always suspend.
+   */
   bool await_ready() const noexcept {
+    std::cout << "Generator (" << promise().promise_id << ") is awaited" << std::endl;
     return false;
   }
 
   template<CONVERTIBLE_TO(base_promise_type) outer_promise_type>
   void await_suspend(coroutine_handle<outer_promise_type> outer) {
     base_promise_type& outer_promise = outer.promise();
+    std::cout << "Generator (" << promise().promise_id << ") is suspended to be chained after ("
+              << outer_promise.promise_id << ")" << std::endl;
     outer_promise.chain(this);
     outer_promise.yielded_value = next();
     if(promise().done) {
+      std::cout << "Generator (" << promise().promise_id << ") finished immediately without yielding" << std::endl;
       outer_promise.no_yield_finish = true;
     }
   }
 
+  /** @brief used to implement range-based loop
+   */
   struct iterator{
     base_generator* gen;
     std::optional<YieldType> value;
@@ -224,9 +229,15 @@ struct generator<YieldType, void>: public base_generator<YieldType> {
     handle(handle)
   {}
 
+  ~generator() override {
+    std::cout << "Generator (" << promise().promise_id << ") destroyed" << std::endl;
+    handle.destroy();
+  }
+
   coroutine_handle<promise_type> handle;
 
   void await_resume() const {
+    std::cout << "Generator (" << promise().promise_id << ") await_resumed" << std::endl;
     if(!handle.promise().done){
       throw resume_unfinished{};
     }
@@ -258,6 +269,11 @@ struct generator: public base_generator<YieldType> {
     handle(handle)
   {}
 
+  ~generator() override {
+    std::cout << "Generator (" << promise().promise_id << ") destroyed" << std::endl;
+    handle.destroy();
+  }
+
   coroutine_handle<promise_type> handle;
 
   ReturnType result() const {
@@ -265,10 +281,11 @@ struct generator: public base_generator<YieldType> {
     if(!promise.returned_value.has_value()){
       throw no_value_returned{};
     }
-    return promise.returned_value.value();
+    return std::move(promise.returned_value.value());
   }
 
   ReturnType await_resume() const {
+    std::cout << "Generator (" << promise().promise_id << ") await_resumed" << std::endl;
     if(!handle.promise().done){
       throw resume_unfinished{};
     }
@@ -303,15 +320,17 @@ struct send_awaitable {
 
   template<CONVERTIBLE_TO(SendType) From>
   void send(From&& input) {
+    std::cout << "sender obtained value " << input << std::endl;
     *value = std::forward<From>(input);
   }
 
   SendType await_resume() const noexcept {
+    std::cout << "sender passed value " << value->value() << " to co_yield caller" << std::endl;
     return value->value();
   }
 };
 
-// send_generator does not work well for nest generator. Please do not use it.
+// send_generator does not work for nest generator via co_await.
 template <typename YieldType, typename SendType, typename ReturnType = void>
 struct send_generator;
 
@@ -333,10 +352,9 @@ struct send_generator<YieldType, SendType, void>: public base_generator<YieldTyp
     handle.promise().sender.value = &send_value;
   }
 
-  void await_resume() const {
-    if(!handle.promise().done){
-      throw resume_unfinished{};
-    }
+  ~send_generator() override {
+    std::cout << "SendGenerator (" << promise().promise_id << ") destroyed" << std::endl;
+    handle.destroy();
   }
 
   base_promise_type& promise() override {
@@ -376,6 +394,10 @@ struct send_generator: public base_generator<YieldType, send_awaitable<SendType>
     handle.promise().sender.value = &send_value;
   }
 
+  ~send_generator() override {
+    std::cout << "SendGenerator (" << promise().promise_id << ") destroyed" << std::endl;
+    handle.destroy();
+  }
 
   ReturnType result() const {
     const auto& promise = handle.promise();
@@ -383,13 +405,6 @@ struct send_generator: public base_generator<YieldType, send_awaitable<SendType>
       throw no_value_returned{};
     }
     return promise.returned_value.value();
-  }
-
-  ReturnType await_resume() const {
-    if(!handle.promise().done){
-      throw resume_unfinished{};
-    }
-    return result();
   }
 
   base_promise_type& promise() override {

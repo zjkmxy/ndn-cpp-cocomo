@@ -6,9 +6,9 @@ def build(bld):
     tmpdir = 'UNIT_TESTS_TMPDIR="%s"' % bld.bldnode.make_node('tmp-files')
 
     # unit test binary
-    bld.program(target=top + 'test_coroutine',
-                name='test_coroutine',
-                source=bld.path.ant_glob('test_coroutine.cpp'),
+    bld.program(target=top + 'test_generator',
+                name='test_generator',
+                source=bld.path.ant_glob('test_generator.cpp'),
                 use='ndn-cpp-cocomo',
                 includes='.',
                 defines=[tmpdir],

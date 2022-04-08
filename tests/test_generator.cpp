@@ -1,7 +1,8 @@
 #include <cstdio>
 #include <string>
 #include <cmath>
-#include "asyncio/coroutine.hpp"
+#include <array>
+#include "asyncio/generator.hpp"
 
 using namespace asyncio;
 
