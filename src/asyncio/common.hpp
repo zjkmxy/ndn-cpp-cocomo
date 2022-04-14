@@ -15,9 +15,11 @@ namespace asyncio {
 #if defined(__GNUC__) && (__GNUC__ >= 10)
 using std::coroutine_handle;
 using std::suspend_always;
+using std::suspend_never;
 #else
 using std::experimental::coroutine_handle;
 using std::experimental::suspend_always;
+using std::experimental::suspend_never;
 #endif
 
 struct double_await: public std::exception{

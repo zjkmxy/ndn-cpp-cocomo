@@ -13,3 +13,11 @@ def build(bld):
                 includes='.',
                 defines=[tmpdir],
                 install_path=None)
+
+    bld.program(target=top + 'test_coroutine',
+                name='test_coroutine',
+                source=bld.path.ant_glob('test_coroutine.cpp'),
+                use='ndn-cpp-cocomo',
+                includes='.',
+                defines=[tmpdir],
+                install_path=None)
