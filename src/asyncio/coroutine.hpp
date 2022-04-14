@@ -205,6 +205,14 @@ struct task<void>: public abstract_task {
     handle.promise().done = &done;
   }
 
+  task(const task&) = delete;
+  void operator=(const task&) = delete;
+
+  task(task&& rhs) {
+    handle = rhs.handle;
+    handle.promise().done = &done;
+  }
+
   ~task() noexcept {
     if(!handle.promise().engine_ptr){
       // throw hanging_task{};
@@ -282,6 +290,11 @@ struct task: public abstract_task {
 
   task(const task&) = delete;
   void operator=(const task&) = delete;
+
+  task(task&& rhs) {
+    handle = rhs.handle;
+    handle.promise().result_ptr = &result_val;
+  }
 
   ~task() noexcept {
     if(!handle.promise().engine_ptr){

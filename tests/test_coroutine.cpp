@@ -60,6 +60,13 @@ task<int> func() {
   co_return 5;
 }
 
+void transfer_schedule() {
+  auto f = func();
+  engine.schedule_task(f, 0);
+  std::unique_ptr<abstract_task> f_p(new task<int>(std::move(f)));
+  engine.transfer_ownership(std::move(f_p));
+}
+
 int main() {
   auto f = func();
 
@@ -68,6 +75,13 @@ int main() {
   std::cout << "engine started!" << std::endl;
   engine.run();
   std::cout << "engine finished!" << std::endl;
+
+  std::cout << std::endl << "======test transfer ownership======" << std::endl;
+  transfer_schedule();
+  std::cout << "engine started!" << std::endl;
+  engine.run();
+  std::cout << "engine finished!" << std::endl;
+
 
   return 0;
 }

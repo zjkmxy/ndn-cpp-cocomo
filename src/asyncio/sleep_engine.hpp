@@ -13,6 +13,7 @@ struct sleep_engine: public abstract_engine {
   using event_data = std::pair<msec, coroutine_handle<>>;
 
   std::list<event_data> events;  // A heap would be faster
+  std::list<std::unique_ptr<abstract_task>> owned_tasks;
   timer tmer;
 
   sleep_engine() {
@@ -65,12 +66,25 @@ struct sleep_engine: public abstract_engine {
         ++ it;
       }
     }
+    // Remove finished owned tasks
+    for(auto it = owned_tasks.begin(); it != owned_tasks.end(); ){
+      if((*it)->is_done()) {
+        std::cout << "engine removed a finished task" <<std::endl;
+        it = owned_tasks.erase(it);
+      } else {
+        ++ it;
+      }
+    }
   }
 
   void run() {
     while(!events.empty()){
       run_one_round();
     }
+  }
+
+  void transfer_ownership(std::unique_ptr<abstract_task>&& task) {
+    owned_tasks.push_back(std::move(task));
   }
 };
 
