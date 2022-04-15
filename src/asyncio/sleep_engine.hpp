@@ -16,9 +16,7 @@ struct sleep_engine: public abstract_engine {
   std::list<std::unique_ptr<abstract_task>> owned_tasks;
   timer tmer;
 
-  sleep_engine() {
-    abstract_engine::current_loop = this;
-  }
+  sleep_engine() {}
 
   void schedule(coroutine_handle<> handle, msec tim) override {
     events.push_back(std::make_pair(tim, handle));

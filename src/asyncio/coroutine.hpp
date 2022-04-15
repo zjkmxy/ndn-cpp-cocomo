@@ -21,8 +21,6 @@ struct abstract_engine {
   virtual bool is_scheduled(coroutine_handle<> handle) const = 0;
 
   virtual ~abstract_engine(){}
-
-  static thread_local abstract_engine* current_loop;
 };
 
 struct sleep_awaiter: suspend_always {
@@ -33,7 +31,8 @@ struct sleep_awaiter: suspend_always {
     engine_ptr(engine), awake_at(awake_at)
   {}
 
-  void await_suspend(coroutine_handle<> caller) const {
+  template<typename T>
+  void await_suspend(coroutine_handle<T> caller) const {
     if(!engine_ptr){
       throw no_engine{};
     }
@@ -49,9 +48,11 @@ struct result_awaiter<void> {
   bool& done;
   std::function<void(coroutine_handle<>)> call_after;
   uint64_t promise_id;
+  abstract_engine*& engine_ptr;
 
-  result_awaiter(bool& done, std::function<void(coroutine_handle<>)> call_after, uint64_t promise_id):
-    done(done), call_after(call_after), promise_id(promise_id)
+  result_awaiter(bool& done, std::function<void(coroutine_handle<>)> call_after, uint64_t promise_id,
+    abstract_engine*& engine):
+    done(done), call_after(call_after), promise_id(promise_id), engine_ptr(engine)
   {}
 
   bool await_ready() const noexcept {
@@ -67,7 +68,11 @@ struct result_awaiter<void> {
     }
   }
 
-  void await_suspend(coroutine_handle<> caller) {
+  template<typename T2>
+  void await_suspend(coroutine_handle<T2> caller) {
+    if(!engine_ptr){
+      engine_ptr = caller.promise().engine_ptr;
+    }
     call_after(caller);
   }
 };
@@ -77,9 +82,11 @@ struct result_awaiter {
   std::optional<T>& result;
   std::function<void(coroutine_handle<>)> call_after;
   uint64_t promise_id;
+  abstract_engine*& engine_ptr;
 
-  result_awaiter(std::optional<T>& result, std::function<void(coroutine_handle<>)> call_after, uint64_t promise_id):
-    result(result), call_after(call_after), promise_id(promise_id)
+  result_awaiter(std::optional<T>& result, std::function<void(coroutine_handle<>)> call_after, uint64_t promise_id,
+    abstract_engine*& engine):
+    result(result), call_after(call_after), promise_id(promise_id), engine_ptr(engine)
   {}
 
   bool await_ready() const noexcept {
@@ -96,7 +103,11 @@ struct result_awaiter {
     return std::move(result.value());
   }
 
-  void await_suspend(coroutine_handle<> caller) {
+  template<typename T2>
+  void await_suspend(coroutine_handle<T2> caller) {
+    if(!engine_ptr){
+      engine_ptr = caller.promise().engine_ptr;
+    }
     call_after(caller);
   }
 };
@@ -181,17 +192,16 @@ struct task<void>: public abstract_task {
     auto& promise = handle.promise();
     return awaiter(done,
       [handle, &promise](coroutine_handle<> event){
-        // Schedule the current one if it is not
         if(!promise.engine_ptr) {
-          promise.engine_ptr = abstract_engine::current_loop;
-          if(!promise.engine_ptr) {
-            throw no_engine{};
-          }
+          throw no_engine{};
+        }
+        // Schedule the current one if it is not
+        if(!promise.engine_ptr->is_scheduled(handle)) {
           promise.engine_ptr->schedule(handle, 0);
         }
         // Remark parent coroutine to schedule it after the current one finishes
         promise.on_finish.push_back(event);
-      }, promise.promise_id);
+      }, promise.promise_id, promise.engine_ptr);
   }
 
   bool is_done() {
@@ -214,11 +224,7 @@ struct task<void>: public abstract_task {
   }
 
   ~task() noexcept {
-    if(!handle.promise().engine_ptr){
-      // throw hanging_task{};
-      std::cerr << hanging_task{}.what() << std::endl;
-      std::terminate();
-    }
+    // Shouldn't access promise here. Already finished.
   }
 
   coroutine_handle<promise_type> handle;
@@ -260,17 +266,16 @@ struct task: public abstract_task {
     auto& promise = handle.promise();
     return awaiter(result_val,
       [handle, &promise](coroutine_handle<> event){
-        // Schedule the current one if it is not
         if(!promise.engine_ptr) {
-          promise.engine_ptr = abstract_engine::current_loop;
-          if(!promise.engine_ptr) {
-            throw no_engine{};
-          }
+          throw no_engine{};
+        }
+        // Schedule the current one if it is not
+        if(!promise.engine_ptr->is_scheduled(handle)) {
           promise.engine_ptr->schedule(handle, 0);
         }
         // Remark parent coroutine to schedule it after the current one finishes
         promise.on_finish.push_back(event);
-      }, promise.promise_id);
+      }, promise.promise_id, promise.engine_ptr);
   }
 
   bool is_done() {
@@ -297,11 +302,7 @@ struct task: public abstract_task {
   }
 
   ~task() noexcept {
-    if(!handle.promise().engine_ptr){
-      // throw hanging_task{};
-      std::cerr << hanging_task{}.what() << std::endl;
-      std::terminate();
-    }
+    // Shouldn't access promise here. Already finished.
   }
 
   coroutine_handle<promise_type> handle;
